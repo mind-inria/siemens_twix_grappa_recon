@@ -2,6 +2,8 @@ import os
 import torch
 import numpy as np
 import scipy
+#import logging
+
 
 from grappaND import GRAPPA_Recon
 from twix_reader import read_twix_datafile
@@ -26,7 +28,14 @@ def _performNoiseDecorr(data, noise):
     return data_decorr
 
 
-def Twix_GRAPPA_Recon(filepath, savepath=None, performRSS=True):
+def Twix_GRAPPA_Recon(filepath, savepath=None, performRSS=True, verbose=False):
+    if not savepath or os.path.isdir(savepath):
+        base = os.path.splitext(os.path.basename(filepath))[0]
+        savepath = os.path.join(os.path.dirname(filepath) if not savepath else savepath, base + "_GRAPPArecon")
+        
+    if verbose:
+        print(f"Input file: {filepath}")
+        print(f"Output file: {savepath}" + ".npy\n")
 
     data, scan_info = read_twix_datafile(filepath)
     data['image'] = _performNoiseDecorr(data['image'], data['noise'])
@@ -38,19 +47,21 @@ def Twix_GRAPPA_Recon(filepath, savepath=None, performRSS=True):
         af.append(int(scan_info.hdr.MeasYaps[('sPat', 'lAccelFactPE')]))
 
     rec = GRAPPA_Recon(data['image'], data['refscan'], af=af)
+    if verbose: print("GRAPPA Reconstruction Done!")
+
     del data
     rec = rec.permute(0,3,1,2)
 
     rec = rec.numpy()
+    
+    if verbose: print("Fixing shape and IFFT..")
     rec = fixShapeAndIFFT(rec, scan_info)
 
     if performRSS:
+        if verbose: print("RSS..")
         rec = rss(rec, axis=0)
-
-    if not savepath or os.path.isdir(savepath):
-        base = os.path.splitext(os.path.basename(filepath))[0]
-        savepath = os.path.join(os.path.dirname(filepath) if not savepath else savepath, base + "_GRAPPArecon")
-
+        
+    if verbose: print("Saving reconstruction..")
     np.save(savepath, rec)
 
 
