@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import scipy
 
 from grappaND import GRAPPA_Recon
 from twix_reader import read_twix_datafile
@@ -9,17 +10,20 @@ from utils import rss
 
 
 def _performNoiseDecorr(data, noise):
-    R = torch.cov(noise)
-    R = R/np.mean(np.abs(np.diag(R)))
-    R[torch.eye(R.size(0), dtype=torch.bool)] = np.abs(np.diag(R))
-    R_inv = torch.linalg.inv(R)
-    R_inv_sqrt = torch.from_numpy(np.real(np.linalg.sqrtm(R_inv.numpy())))
-    D = R_inv_sqrt.T
+    R = np.cov(noise, rowvar=False)
+    mean_abs_diag = np.mean(np.abs(np.diag(R)))
+    R = R / mean_abs_diag
+    np.fill_diagonal(R, np.abs(np.diag(R)))
+    R_inv = np.linalg.inv(R)
+    R_inv_sqrt = scipy.linalg.sqrtm(R_inv).astype(np.complex64)
+
+    D = torch.from_numpy(R_inv_sqrt)
 
     data_sz = data.shape
     data_decorr = D @ data.reshape(data.shape[0], -1)
+    data_decorr = data_decorr.reshape(data_sz)
 
-    return data_decorr.reshape(data_sz)
+    return data_decorr
 
 
 def Twix_GRAPPA_Recon(filepath, savepath=None, performRSS=True):
@@ -34,17 +38,22 @@ def Twix_GRAPPA_Recon(filepath, savepath=None, performRSS=True):
         af.append(int(scan_info.hdr.MeasYaps[('sPat', 'lAccelFactPE')]))
 
     rec = GRAPPA_Recon(data['image'], data['refscan'], af=af)
-
     del data
+    rec = rec.permute(0,3,1,2)
 
     rec = rec.numpy()
     rec = fixShapeAndIFFT(rec, scan_info)
 
     if performRSS:
         rec = rss(rec, axis=0)
-    
-    if not savepath:
-        base, ext = os.path.splitext(filepath)
-        savepath = base + "_GRAPPArecon" + ext
-    
+
+    if not savepath or os.path.isdir(savepath):
+        base = os.path.splitext(os.path.basename(filepath))[0]
+        savepath = os.path.join(os.path.dirname(filepath) if not savepath else savepath, base + "_GRAPPArecon")
+
     np.save(savepath, rec)
+
+
+if __name__ == "__main__":
+    import sys
+    Twix_GRAPPA_Recon(sys.argv[1], savepath=sys.argv[2] if len(sys.argv) > 2 else None)
