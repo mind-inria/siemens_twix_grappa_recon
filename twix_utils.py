@@ -1,4 +1,6 @@
 import numpy as np
+import torch
+import scipy
 
 
 def fixShapeAndIFFT(sig, scan):
@@ -20,3 +22,20 @@ def fixShapeAndIFFT(sig, scan):
         sig_r[nc] = np.fft.fftshift(np.fft.ifft(np.fft.ifft(np.fft.ifft(np.fft.fftshift(sig_r[nc], axes=(0,1,2)), axis=0), axis=1), axis=2), axes=(0,1,2))
 
     return sig_r
+
+
+def performNoiseDecorr(data, noise):
+    R = np.cov(noise, rowvar=False)
+    mean_abs_diag = np.mean(np.abs(np.diag(R)))
+    R = R / mean_abs_diag
+    np.fill_diagonal(R, np.abs(np.diag(R)))
+    R_inv = np.linalg.inv(R)
+    R_inv_sqrt = scipy.linalg.sqrtm(R_inv).astype(np.complex64)
+
+    D = torch.from_numpy(R_inv_sqrt)
+
+    data_sz = data.shape
+    data_decorr = D @ data.reshape(data.shape[0], -1)
+    data_decorr = data_decorr.reshape(data_sz)
+
+    return data_decorr
