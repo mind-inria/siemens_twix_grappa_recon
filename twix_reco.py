@@ -18,7 +18,7 @@ def Twix_GRAPPA_Recon(filepath,
     if not savepath or os.path.isdir(savepath):
         base = os.path.splitext(os.path.basename(filepath))[0]
         savepath = os.path.join(os.path.dirname(filepath) if not savepath else savepath, base + "_GRAPPArecon")
-        
+
     if verbose:
         print(f"Input file: {filepath}")
         print(f"Output file: {savepath}" + ".npy\n")
@@ -38,8 +38,9 @@ def Twix_GRAPPA_Recon(filepath,
     if verbose: print("GRAPPA Reconstruction done!")
 
     del data
-    rec = rec.permute(0,3,1,2)
 
+    rec = rec.permute(0,3,1,2)
+    rec = rec.flip(3)
     rec = rec.numpy()
     
     if verbose: print("Fixing shape and IFFT..")
