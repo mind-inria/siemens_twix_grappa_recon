@@ -10,13 +10,13 @@ def read_twix_datafile(filepath, to_extract=["image", "refscan", "noise"], backe
         scan.image.flagRemoveOS = True
         scan.image.flagDoAverage = True
         scan.image.flagIgnoreSeg = True
-        img = scan.image['']
+        sig = scan.image['']
         if backend == "torch":
-            sig = torch.from_numpy(img)
+            sig = torch.from_numpy(sig)
             sig = sig.permute(1,2,3,0)
         else:
             raise ValueError("Bad argument")
-        to_return["image"] = img
+        to_return["image"] = sig
     if "refscan" in to_extract:
         scan.refscan.squeeze = True
         scan.refscan.flagRemoveOS = True
