@@ -1,7 +1,7 @@
 import os
 import numpy as np
 
-from grappaND2 import GRAPPA_Recon
+from grappaND import GRAPPA_Recon
 from twix_reader import read_twix_datafile
 from twix_utils import fixShapeAndIFFT, performNoiseDecorr
 from utils import rss, save_nifti
