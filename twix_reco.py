@@ -11,7 +11,7 @@ def Twix_GRAPPA_Recon(filepath,
                       savepath=None,
                       performRSS=True,
                       save_npy=True,
-                      save_nii=False,
+                      save_nii=True,
                       verbose=True
 ) -> None:
     
@@ -46,7 +46,7 @@ def Twix_GRAPPA_Recon(filepath,
     rec = fixShapeAndIFFT(rec, scan_info)
 
     if performRSS:
-        if verbose: print("RSS..")
+        if verbose: print("Performing RSS..")
         rec = rss(rec, axis=0)
     
     if save_npy:
