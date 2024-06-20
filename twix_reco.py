@@ -1,10 +1,10 @@
 import os
 import numpy as np
 
-from grappaND import GRAPPA_Recon
+from grappa.grappaND import GRAPPA_Recon
 from twix_reader import read_twix_datafile
 from twix_utils import fixShapeAndIFFT, performNoiseDecorr
-from utils import rss, save_nifti
+from grappa.utils import rss, save_nifti
 
 
 def Twix_GRAPPA_Recon(filepath,
@@ -62,3 +62,4 @@ def Twix_GRAPPA_Recon(filepath,
 if __name__ == "__main__":
     import sys
     Twix_GRAPPA_Recon(sys.argv[1], savepath=sys.argv[2] if len(sys.argv) > 2 else None)
+
