@@ -21,8 +21,8 @@ def Twix_GRAPPA_Recon(filepath,
 
     if verbose:
         print(f"Input file: {filepath}")
-        print(f"Output file: {savepath}" + ".npy\n")
-        print(f"Output file: {savepath}" + ".npy\n")
+        if save_npy: print(f"Output file: {savepath}" + ".npy\n")
+        if save_nii: print(f"Output file: {savepath}" + ".nii\n")
 
     data, scan_info = read_twix_datafile(filepath)
     data['image'] = performNoiseDecorr(data['image'], data['noise'])
