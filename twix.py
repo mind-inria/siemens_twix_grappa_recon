@@ -94,7 +94,6 @@ def get_siemens_twix_rotation_matrix(filepath):
 
 
 class SiemensTwixReco:
-
     def __init__(self, filepath, **kwargs):
         self.filepath = filepath
         self.twix = mapvbvd.mapVBVD(self.filepath)
@@ -105,25 +104,21 @@ class SiemensTwixReco:
         self.doNoiseDecorr = 'noise' in self.twix
         self.doPhaseCorr = 'phasecor' in self.twix
         self.doRefPhaseCorr = 'refscanPC' in self.twix
-        self.doRampRegrid = 'alRegridMode' in int(self.twix.hdr.Meas and self.twix.hdr.Meas.alRegridMode[0]) > 1
+        self.doRampRegrid = 'alRegridMode' in self.twix.hdr.Meas and int(self.twix.hdr.Meas.alRegridMode[0]) > 1
         self.doPreRecoOSRemoval = True
 
         fields = self.twix.keys()
 
         for name in fields:
-            self.twix[name].flagRampSampRegrid = name not in ['noise', 'vop'] and self.doRampRegrid
-        
-        self.twix.image.flagRemoveOS = True
-        self.twix.image.flagDoAverage = True
-        self.twix.image.flagIgnoreSeg = True
-        self.twix.image.flag
-
-        self.twix.refscan.flagRemoveOS = True
-        self.twix.refscan.flagDoAverage = True
-        self.twix.refscan.flagIgnoreSeg = True
+            if name != 'hdr':
+                self.twix[name].flagRemoveOS = name not in ['noise', 'vop']
+                self.twix[name].flagDoAverage = True
+                self.twix[name].flagSkipToFirstLine = name not in ['image']
+                self.twix[name].flagRampSampRegrid = name not in ['noise', 'vop'] and self.doRampRegrid
+                self.twix[name].flagIgnoreSeg = not self.doRampRegrid #and  not self.doPhaseCorr
         
         self.NCha = int(self.twix.image.NCha)
-        self.NCol = int(self.twix.image.NCol)
+        self.NCol = int(self.twix.image.NCol) // 2
         self.NLin = int(self.twix.image.NLin)
         self.NPar = int(self.twix.image.NPar)
         self.NSli = int(self.twix.image.NSli)
@@ -154,7 +149,7 @@ class SiemensTwixReco:
         self.kwargs = kwargs
 
     def _readSig(self):
-        self.sig = self.twix.image[:,:,:,:,self.cSli,0,0,self.cEco,self.cRep,self.cSet].swapaxes(0,1)
+        self.sig = self.twix.image[:,:,:,:,self.cSli,0,0,self.cEco,self.cRep,self.cSet,:].swapaxes(0,1)
         self.sig = self.sig.squeeze()
         self.sig = torch.from_numpy(self.sig)
 
@@ -172,56 +167,64 @@ class SiemensTwixReco:
         else:
             self.D = np.eye(self.NCha)
         
-    def _calcPhaseCorr(self. sig, pc_obj):
+    def _performPhaseCorr(self, sig, pc_obj):
         if self.doPhaseCorr:
-            self.twix.phasecor.flagRemoveOS = True
-            self.twix.phasecor.flagIgnoreSeg = False
-            self.twix.phasecor.flagDoAverage = True
-            self.twix.phasecor.flagRampSampRegird = True
-            self.twix.phasecor.flagSkipToFirstLine = True
 
-            pc = pc_obj[:,:,:,:,:].squeeze().swapaxes(0,1)
+            pc = pc_obj[:,:,:,:,self.cSli,:,0,min(pc_obj.NEco, self.cEco), min(pc_obj.NRep, self.cRep),min(pc_obj.NSet, self.cSet),:].swapaxes(0,1)[:,:,:,:,0,0,0,0,0,0,:,0,0,0,0,0]
 
             if self.doNoiseDecorr:
                 pc = self._performNoiseDecorr(pc)
 
-            pc = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(pc, axes=1), axis=1), axes=1)
+            pc = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(pc, axes=1), axis=1, norm='ortho'), axes=1)
 
             #wi = np.sqrt(np.sum(np.abs(pc[:,:,:,:,:])**2, axis=4))
 
-            pc_method = 'autocorracrossseg'
+            pc_method = 'autocorr'
 
             match pc_method:
-                # case "autocorracrossseg":
-                #     ncol = self.NCol
-                
-                #     # ifft col dim.
-                #     pc = ifftn(self.sig, [-1])
-                    
-                #     # calculate phase slope from autocorrelation (for both readout polarities separately - each in its own dim)
-                #     slope = np.angle((np.conj(pc[1:]) * pc[:-1]).sum(0, keepdims=True).sum(1, keepdims=True))
-                #     x = np.arange(ncol) - ncol//2
-                    
-                #     return np.exp(1j * slope * x)
-                case "auto":
-                    x = np.linspace(-0.5, 0.5, self.NCol)
-                    slope = self.NCol * np.angle(np.sum(np.sum(np.conj(pc[:, : -1, 0, :]) * pc[:, 1 :, 0, :], axis=1), axis=0))
+                case "autocorracrossseg":
+                    x = np.arange(-np.floor(self.NCol / 2), np.ceil(self.NCol / 2))
 
-                    intercept = 0
-                    # Create the linear phase
-                    pc = np.add.outer(slope, x) + intercept
+                    dphi1 = np.conj(np.multiply(pc[:, 1:, 0, 0, 1:], np.conj(pc[:, 1:, 0, 0, 0]))) * np.conj(np.multiply(pc[:, :-1, 0, 0, 1:], np.conj(pc[:, :-1, 0, 0, 0])))
+                    dphi1 = np.sum((self.NCol - 1) * dphi1, axis=1)
+                    dphi1 = np.sum(dphi1, axis=0)
+                    dphi1 = np.angle(dphi1)
 
-                    # Apply the phase
+                    dphi0 = np.multiply(pc[:, 1:-1, 0, 0, 0], np.conj(pc[:, 1:-1, 0, 0, 1:]))
+                    dphi0 = np.multiply(dphi0, np.exp(1j * np.multiply(x[1:-1], dphi1)))
+                    dphi0 = np.sum(np.multiply(self.NCol - 2, dphi0), axis=1)
+                    dphi0 = np.sum(dphi0, axis=0)
+                    dphi0 = -np.angle(dphi0)
+
+                    pc = -np.add(dphi0, np.multiply(dphi1, x)) / 2
+                    pc[:, :, :, :, pc.shape[4] + 1] = -pc
                     pc = np.exp(1j * pc)
-            
-            sig = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(sig, axes=1), axis=1), axes=1)
+
+                case "autocorr":
+                    x = np.linspace(-0.5, 0.5, self.NCol)
+
+                    slope = self.NCol * np.angle(np.sum(np.sum(np.conj(pc[:, :-1, 0, 0, :]) * pc[:, 1:, 0, 0, :], axis=1), axis=0))
+                    intercept = 0
+
+                    pc = np.outer(x, slope) + intercept
+
+                    pc = np.exp(1j * pc)
+                    pc = pc[None, :, None, None, :]
+                
+
+            sig = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(sig, axes=1), axis=1, norm='ortho'), axes=1)
             sig = pc.conj() * sig
-            sig = np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(pc, axes=1), axis=1), axes=1)
+            sig = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(sig, axes=1), axis=1, norm='ortho'), axes=1)
 
             return sig
-
-    def _performPhaseCorr(self):
-        pass
+    
+    def _performRampRegrid(self, sig=None):
+        if self.doRampRegrid:
+            if sig is None:
+                self.sig = self.sig.sum(-1)
+            else:
+                sig = sig.sum(-1)
+                return sig
 
     def _performNoiseDecorr(self, data):
         data_sz = data.shape
@@ -252,7 +255,6 @@ class SiemensTwixReco:
         self.sig = sig_r
     
     def runReco(self):
-
         if self.doNoiseDecorr:
             self._calcNoiseDecorrMatrix()
 
@@ -284,21 +286,33 @@ class SiemensTwixReco:
                     torch.cuda.empty_cache()
 
     def _performGrappa(self):
-        acs = self.twix.refscan[:,:,:,:,self.cSli,0,0,0,0,0,].swapaxes(0,1)
+        acs = self.twix.refscan[:,:,:,:,self.cSli,0,0,0,0,0,:].swapaxes(0,1)
         acs = acs.squeeze()
-        if self.doNoiseDecorr: acs = self._performNoiseDecorr(acs)
-        else: acs = torch.from_numpy(acs)
+        
+        if self.doNoiseDecorr:
+            acs = self._performNoiseDecorr(acs)
+
+        if self.doPhaseCorr:
+            acs = self._performPhaseCorr(acs, self.twix.refscanPC)
+        
+        if self.doRampRegrid:
+            acs = self._performRampRegrid(acs)
+        
         if len(self.sig.shape) == 3:
             self.sig = self.sig[:, :, :, None]
+
         if len(acs.shape) == 3:
             acs = acs[:, :, :, None]
+        
+        acs = torch.from_numpy(acs) if type(acs) is not torch.Tensor else acs
+        self.sig = torch.from_numpy(self.sig) if type(self.sig) is not torch.Tensor else self.sig
 
         self.sig = self.sig.permute(0,2,3,1)
         acs = acs.permute(0,2,3,1)
-        before_recon = timer()
+        #before_recon = timer()
         self.sig = GRAPPA_Recon(self.sig, acs, af=self.af, **self.kwargs)
-        if 'GRAPPA_recon_time' not in self.recon_times.keys():
-            self.recon_times['GRAPPA_recon_time'] = timer() - before_recon
+        #if 'GRAPPA_recon_time' not in self.recon_times.keys():
+        #    self.recon_times['GRAPPA_recon_time'] = timer() - before_recon
         self.sig = self.sig.permute(0,3,1,2)
 
         self.sig = self.sig.cpu().numpy()
@@ -307,11 +321,14 @@ class SiemensTwixReco:
         if self.doNoiseDecorr:
             self.sig = self._performNoiseDecorr(self.sig)
 
+        if self.doPhaseCorr:
+            self.sig = self._performPhaseCorr(self.sig, self.twix.phasecor)
+        self._performRampRegrid()
         self._performGrappa()
-        bef = timer()
+        #bef = timer()
         self._fixShapeAndIFFT()
-        if 'IFFTANDSHAPE' not in self.recon_times.keys():
-            self.recon_times['IFFTANDSHAPE'] = timer() - bef
+        #if 'IFFTANDSHAPE' not in self.recon_times.keys():
+        #    self.recon_times['IFFTANDSHAPE'] = timer() - bef
 
     def saveToNifTI(self, filepath, to_dicom_range=False):
         try:
@@ -321,7 +338,7 @@ class SiemensTwixReco:
             #self.img = self.img.swapaxes(0,1)
             #self.img = np.int16(cv2.normalize(self.img, None, 0, 4095, cv2.NORM_MINMAX))
             if to_dicom_range:
-                self.img = np.int16(minmax_normalize(self.img, 0, 4095))
+                self.img = np.int16(range_normalize(self.img, 0, 4095))
             scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
             nib.save(scan_img, filepath)
         except AssertionError as e:
@@ -330,7 +347,6 @@ class SiemensTwixReco:
     def saveToNpy(self, filepath):
         try:
             assert self.img is not None
-
             np.save(filepath, self.img.squeeze())
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
