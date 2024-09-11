@@ -4,15 +4,11 @@ import math
 import torch
 import scipy
 import nibabel as nib
-import pydicom
+#import pydicom
 import logging
-import cv2
-import os
-import json
-import time
 import sys
 
-from timeit import default_timer as timer
+#from timeit import default_timer as timer
 
 from grappa.grappaND import GRAPPA_Recon
 from tqdm import tqdm
@@ -237,7 +233,7 @@ class SiemensTwixReco:
         self.sig = self.sig.permute(0,2,3,1)
         self.acs = self.acs.permute(0,2,3,1) if first_read_acs else self.acs
 
-        self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, grappa_kernel=self.grappa_kernel, mask=mask, **self.kwargs)
+        self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, grappa_kernel=self.grappa_kernel, **self.kwargs)
         
         self.sig = self.sig.permute(0,3,1,2)
         self.sig = self.sig.cpu().numpy()
@@ -322,6 +318,6 @@ class SiemensTwixReco:
 
 if __name__ == "__main__":
     filename = sys.argv[1]
-    scan = SiemensTwixReco(filename, kernel_size=(4,4,5), cuda=True, cuda_mode="application", lambda_=1e-4, batch_size=10, verbose=True)
+    scan = SiemensTwixReco(filename, kernel_size=(4,4,5), cuda=True, cuda_mode="application", lambda_=1e-4, batch_size=20)
     scan.runReco()
     scan.saveToNifTI(sys.argv[2])
