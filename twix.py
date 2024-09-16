@@ -4,13 +4,18 @@ import math
 import torch
 import scipy
 import nibabel as nib
-#import pydicom
+import pydicom
 import logging
-import sys
+import cv2
+import os
+import json
+import time
+from tqdm import tqdm
 
-#from timeit import default_timer as timer
+from timeit import default_timer as timer
 
-from grappa.grappaND import GRAPPA_Recon
+from grappa.grappaNDfix import GRAPPA_Recon
+#from grappa.grappa_ND_conv2 import GRAPPA_Recon
 from tqdm import tqdm
 
 from twix_utils import range_normalize
@@ -20,10 +25,93 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def siemens_quat_to_rot_mat(q):
+    ds = 2.0 / np.sum(q**2)
+    dxs = q[1] * ds
+    dys = q[2] * ds
+    dzs = q[3] * ds
+    dwx = q[0] * dxs
+    dwy = q[0] * dys
+    dwz = q[0] * dzs
+    dxx = q[1] * dxs
+    dxy = q[1] * dys
+    dxz = q[1] * dzs
+    dyy = q[2] * dys
+    dyz = q[2] * dzs
+    dzz = q[3] * dzs
+    
+    R = np.zeros((4, 4))
+    R[0, 0] = 1.0 - (dyy + dzz)
+    R[0, 1] = dxy + dwz
+    R[0, 2] = dxz - dwy
+    R[1, 0] = dxy - dwz
+    R[1, 1] = 1.0 - (dxx + dzz)
+    R[1, 2] = dyz + dwx
+    R[2, 0] = dxz + dwy
+    R[2, 1] = dyz - dwx
+    R[2, 2] = 1.0 - (dxx + dyy)
+
+    R[:2] = -R[:2]
+    
+    R[-1,-1] = 1
+        
+    return R
+
+
+def siemens_quat_to_rot_mat2(quat):
+    """
+    Calculate the rotation matrix from Siemens Twix quaternion.
+    """
+    a = quat[0]
+    b = quat[1]
+    c = quat[2]
+    d = quat[3]
+
+    R = np.zeros((4, 4))
+    
+    R[0,0] = 1.0 - 2.0 * (b * b + c * c)
+    R[0,1] = 2.0 * (a * b - c * d)
+    R[0,2] = 2.0 * (a * c + b * d)
+
+    R[1,0] = 2.0 * (a * b + c * d)
+    R[1,1] = 1.0 - 2.0 * (a * a + c * c)
+    R[1,2] = 2.0 * (b * c - a * d)
+
+    R[2,0] = 2.0 * (a * c - b * d)
+    R[2,1] = 2.0 * (b * c + a * d)
+    R[2,2] = 1.0 - 2.0 * (a * a + b * b)
+
+    R[-1,-1] = 1
+
+    #tmp = R[:,1]
+    #R[:,1] = R[:,0]
+    #R[:,0] = tmp
+
+    #R[:,:2] = -R[:,:2]
+
+    return R
+
+
+def get_siemens_twix_rotation_matrix(filepath):
+    """
+    Extract the orientation matrix from Siemens Twix (twixtools) scan object.
+    """
+    from twixtools import read_twix
+    twix_obj = read_twix(filepath)
+    if type(twix_obj) is list:
+        twix_obj = twix_obj[-1]
+    mdb = twix_obj['mdb']
+    mdh = mdb[0].mdh
+    quat = mdh.SliceData.Quaternion
+    return siemens_quat_to_rot_mat(quat)
+
+
+
 class SiemensTwixReco:
     def __init__(self, filepath, **kwargs):
         self.filepath = filepath
-        self.twix = mapvbvd.mapVBVD(self.filepath, quiet=True)
+        self.twix = mapvbvd.mapVBVD(self.filepath, quiet=False)
+        self.no_recon = False
 
         if isinstance(self.twix, list):
             self.twix = self.twix[-1]
@@ -56,6 +144,7 @@ class SiemensTwixReco:
         self.centCol = int(self.twix.image.centerCol[0])
         self.centLin = int(self.twix.image.centerLin[0])
         self.centPar = int(self.twix.image.centerPar[0])
+        self.recon_times = {}
 
         self.sig = None
         self.grappa_kernel = None
@@ -69,8 +158,15 @@ class SiemensTwixReco:
         
         self.af = [int(self.twix.hdr.MeasYaps[('sPat', 'lAccelFactPE')]), int(self.twix.hdr.MeasYaps[('sPat', 'lAccelFact3D')])]
 
+        self.caipiDelta = int(
+            self.twix.hdr.MeasYaps.get(('sPat', 'lReorderingShift3D')) or 
+            self.twix.hdr.Meas.get('CaipirinhaShift') or 
+            0
+        )
+
         if self.NPar == 1:
             self.af[1] = 1
+
 
         self.kwargs = kwargs
 
@@ -180,12 +276,14 @@ class SiemensTwixReco:
         self.sig = sig_r
     
     def runReco(self):
+        # self.NFra = self.NFra[:1]
         if self.doNoiseDecorr:
             self._calcNoiseDecorrMatrix()
 
         for e in range(self.NEco):
             self.cEco = e
             for s in tqdm(range(self.NSli)):
+                
                 self.cSli = s
                 self.cSliSort = self.chronSlices[s]
                 if self.cSliSort > self.NSli/self.multibandFactor:
@@ -193,15 +291,21 @@ class SiemensTwixReco:
 
                 self.cSliSort = (self.cSliSort + np.arange(self.multibandFactor) * self.NSli/self.multibandFactor).astype(int)
                 self.acs = None
-
-                for f in self.NFra:
+                
+                for f in tqdm(self.NFra):
                     self.cFra = self.NFra[f]
                     self.cRep = math.ceil((self.cFra+1)/self.NSet) - 1
                     self.cSet = (self.cFra % self.NSet)
-
+                    before = timer()
                     self._readSig()
+                    self.recon_times[f'after_read+{s}'] = timer() - before
+                    bff = timer()
                     self._performReco()
+                    self.recon_times[f'after_perform reco+{s}'] = timer()-bff
+                    bff2=timer()
                     self._saveImg()
+                    self.recon_times[f'saveImg+{s}'] = timer() - bff2
+                    self.recon_times[f'read+reco+save+{s}'] = timer() - before
 
                     torch.cuda.empty_cache()
 
@@ -233,9 +337,22 @@ class SiemensTwixReco:
         self.sig = self.sig.permute(0,2,3,1)
         self.acs = self.acs.permute(0,2,3,1) if first_read_acs else self.acs
 
-        self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, grappa_kernel=self.grappa_kernel, **self.kwargs)
-        
+
+        #  # TO DELETE !!
+        # mask = torch.zeros_like(self.sig)
+        # mask[:, mask.shape[1]//2 - 30:mask.shape[1]//2 + 30,
+        #         mask.shape[2]//2 - 30:mask.shape[2]//2 + 30,
+        #         mask.shape[3]//2 - 30:mask.shape[3]//2 + 30,] = 1
+        # mask = mask == 1
+        # mask = mask[0]
+
+        #before_recon = timer()
+        if not self.no_recon:
+            self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, delta=self.caipiDelta, grappa_kernel=self.grappa_kernel, quiet=True, **self.kwargs)
+        #if 'GRAPPA_recon_time' not in self.recon_times.keys():
+        #    self.recon_times['GRAPPA_recon_time'] = timer() - before_recon
         self.sig = self.sig.permute(0,3,1,2)
+
         self.sig = self.sig.cpu().numpy()
 
     def _performReco(self):
@@ -244,10 +361,12 @@ class SiemensTwixReco:
 
         if self.doPhaseCorr:
             self.sig = self._performPhaseCorr(self.sig, self.twix.phasecor)
-
         self._performRampRegrid()
         self._performGrappa()
+        #bef = timer()
         self._fixShapeAndIFFT()
+        #if 'IFFTANDSHAPE' not in self.recon_times.keys():
+        #    self.recon_times['IFFTANDSHAPE'] = timer() - bef
 
     def saveToNifTI(self, filepath, to_dicom_range=False):
         try:
@@ -258,16 +377,24 @@ class SiemensTwixReco:
             if len(self.NFra) == 1:
                 if to_dicom_range:
                     self.img = np.int16(range_normalize(self.img, 0, 4095))
-                scan_img = nib.Nifti1Image(self.img, affine=np.eye(4)) # get_siemens_twix_rotation_matrix(self.filepath))
+                #scan_img = nib.Nifti1Image(self.img, affine=get_siemens_twix_rotation_matrix(self.filepath))
+                scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
                 nib.save(scan_img, filepath)
             else:
                 for f in self.NFra:
                     img = self.img[...,f]
                     if to_dicom_range:
                         img = np.int16(range_normalize(img, 0, 4095))
-                    scan_img = nib.Nifti1Image(img, affine=np.eye(4)) # affine=get_siemens_twix_rotation_matrix(self.filepath))
+                    scan_img = nib.Nifti1Image(img, affine=get_siemens_twix_rotation_matrix(self.filepath))
                     nib.save(scan_img, f"{filepath}_{f}")
-
+            # #self.img = self.img.real.squeeze()
+            
+            # #self.img = self.img.swapaxes(0,1)
+            # #self.img = np.int16(cv2.normalize(self.img, None, 0, 4095, cv2.NORM_MINMAX))
+            # if to_dicom_range:
+            #     self.img = np.int16(range_normalize(self.img, 0, 4095))
+            # #33scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
+            # nib.save(scan_img, filepath)
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
 
@@ -278,32 +405,32 @@ class SiemensTwixReco:
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
 
-    # def saveToDICOM(self, filepath):
-    #     img = np.int16(range_normalize(self.img, 0, 4095))
-    #     uid = pydicom.uid.generate_uid()
-    #     for s in range(self.img.shape[2]):
-    #         ds = pydicom.Dataset()
-    #         ds.PatientID = '123456'
-    #         ds.Modality = 'MR'
-    #         ds.StudyDate = '20240908'
-    #         ds.SeriesDate = uid
-    #         ds.InstanceNumber = s+1
-    #         ds.Rows = img.shape[0]
-    #         ds.Columns = img.shape[1]
-    #         ds.PixelSpacing = [0.8, 0.8]
-    #         ds.BitsAllocated = 16
-    #         ds.BitsStored = 12
-    #         ds.PhotometricInterpretation = "MONOCHROME2"
-    #         ds.PixelRepresentation = 0  # Unsigned integer
-    #         ds.SamplesPerPixel = 1
+    def saveToDICOM(self, filepath):
+        img = np.int16(range_normalize(self.img, 0, 4095))
+        uid = pydicom.uid.generate_uid()
+        for s in range(self.img.shape[2]):
+            ds = pydicom.Dataset()
+            ds.PatientID = '123456'
+            ds.Modality = 'MR'
+            ds.StudyDate = '20240908'
+            ds.SeriesDate = uid
+            ds.InstanceNumber = s+1
+            ds.Rows = img.shape[0]
+            ds.Columns = img.shape[1]
+            ds.PixelSpacing = [0.8, 0.8]  # Adjust pixel spacing as needed
+            ds.BitsAllocated = 16
+            ds.BitsStored = 12
+            ds.PhotometricInterpretation = "MONOCHROME2"
+            ds.PixelRepresentation = 0  # Unsigned integer
+            ds.SamplesPerPixel = 1
 
-    #         # Set Pixel Data tag
-    #         ds.PixelData = img[...,s,0].tostring()
-    #         ds.is_little_endian = True
-    #         ds.is_implicit_VR = True
+            # Set Pixel Data tag
+            ds.PixelData = img[...,s,0].tostring()
+            ds.is_little_endian = True
+            ds.is_implicit_VR = True
 
-    #         # Save the DICOM file
-    #         ds.save_as(os.path.join(filepath, f"{uid}-{s}.dcm"))
+            # Save the DICOM file
+            ds.save_as(os.path.join(filepath, f"tg220462-0004_001_000027_{uid}-{s}.dcm"))
 
     def _saveImg(self):
         if self.img is None:
@@ -315,9 +442,3 @@ class SiemensTwixReco:
 
         self.img[0,..., self.cSliSort, self.cFra, self.cEco] = np.sqrt(np.sum(np.abs(np.flip(self.sig, 1))**2, axis=0))
 
-
-if __name__ == "__main__":
-    filename = sys.argv[1]
-    scan = SiemensTwixReco(filename, kernel_size=(4,4,5), cuda=True, cuda_mode="application", lambda_=1e-4, batch_size=20)
-    scan.runReco()
-    scan.saveToNifTI(sys.argv[2])
