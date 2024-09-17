@@ -8,7 +8,6 @@ import nibabel as nib
 import logging
 import sys
 
-#from timeit import default_timer as timer
 
 from grappa.grappaND import GRAPPA_Recon
 from tqdm import tqdm
@@ -23,7 +22,8 @@ logger = logging.getLogger(__name__)
 class SiemensTwixReco:
     def __init__(self, filepath, **kwargs):
         self.filepath = filepath
-        self.twix = mapvbvd.mapVBVD(self.filepath, quiet=True)
+        self.twix = mapvbvd.mapVBVD(self.filepath, quiet=False)
+        self.no_recon = False
 
         if isinstance(self.twix, list):
             self.twix = self.twix[-1]
@@ -69,6 +69,12 @@ class SiemensTwixReco:
         
         self.af = [int(self.twix.hdr.MeasYaps[('sPat', 'lAccelFactPE')]), int(self.twix.hdr.MeasYaps[('sPat', 'lAccelFact3D')])]
 
+        self.caipiDelta = int(
+            self.twix.hdr.MeasYaps.get(('sPat', 'lReorderingShift3D')) or 
+            self.twix.hdr.Meas.get('CaipirinhaShift') or 
+            0
+        )
+
         if self.NPar == 1:
             self.af[1] = 1
 
@@ -93,7 +99,7 @@ class SiemensTwixReco:
         else:
             self.D = np.eye(self.NCha)
         
-    def _performPhaseCorr(self, sig, pc_obj):
+    def _performPhaseCorr(self, sig, pc_obj, pc_method="autocorr"):
         if self.doPhaseCorr:
 
             pc = pc_obj[:,:,:,:,self.cSli,:,0,min(pc_obj.NEco, self.cEco),
@@ -104,27 +110,7 @@ class SiemensTwixReco:
 
             pc = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(pc, axes=1), axis=1, norm='ortho'), axes=1)
 
-            pc_method = 'autocorr'
-
             match pc_method:
-                # case "autocorracrossseg":
-                #     x = np.arange(-np.floor(self.NCol / 2), np.ceil(self.NCol / 2))
-
-                #     dphi1 = np.conj(np.multiply(pc[:, 1:, 0, 0, 1:], np.conj(pc[:, 1:, 0, 0, 0]))) * np.conj(np.multiply(pc[:, :-1, 0, 0, 1:], np.conj(pc[:, :-1, 0, 0, 0])))
-                #     dphi1 = np.sum((self.NCol - 1) * dphi1, axis=1)
-                #     dphi1 = np.sum(dphi1, axis=0)
-                #     dphi1 = np.angle(dphi1)
-
-                #     dphi0 = np.multiply(pc[:, 1:-1, 0, 0, 0], np.conj(pc[:, 1:-1, 0, 0, 1:]))
-                #     dphi0 = np.multiply(dphi0, np.exp(1j * np.multiply(x[1:-1], dphi1)))
-                #     dphi0 = np.sum(np.multiply(self.NCol - 2, dphi0), axis=1)
-                #     dphi0 = np.sum(dphi0, axis=0)
-                #     dphi0 = -np.angle(dphi0)
-
-                #     pc = -np.add(dphi0, np.multiply(dphi1, x)) / 2
-                #     pc[:, :, :, :, pc.shape[4] + 1] = -pc
-                #     pc = np.exp(1j * pc)
-
                 case "autocorr":
                     x = np.linspace(-0.5, 0.5, self.NCol)
 
@@ -135,13 +121,12 @@ class SiemensTwixReco:
 
                     pc = np.exp(1j * pc)
                     pc = pc[None, :, None, None, :]
-                
 
             sig = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(sig, axes=1), axis=1, norm='ortho'), axes=1)
             sig = pc.conj() * sig
             sig = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(sig, axes=1), axis=1, norm='ortho'), axes=1)
 
-            return sig
+        return sig
     
     def _performRampRegrid(self, sig=None):
         if self.doRampRegrid:
@@ -149,7 +134,9 @@ class SiemensTwixReco:
                 self.sig = self.sig.sum(-1)
             else:
                 sig = sig.sum(-1)
-                return sig
+
+        if sig is not None:
+            return sig
 
     def _performNoiseDecorr(self, data):
         data_sz = data.shape
@@ -186,6 +173,7 @@ class SiemensTwixReco:
         for e in range(self.NEco):
             self.cEco = e
             for s in tqdm(range(self.NSli)):
+                
                 self.cSli = s
                 self.cSliSort = self.chronSlices[s]
                 if self.cSliSort > self.NSli/self.multibandFactor:
@@ -193,12 +181,11 @@ class SiemensTwixReco:
 
                 self.cSliSort = (self.cSliSort + np.arange(self.multibandFactor) * self.NSli/self.multibandFactor).astype(int)
                 self.acs = None
-
-                for f in self.NFra:
+                
+                for f in tqdm(self.NFra):
                     self.cFra = self.NFra[f]
                     self.cRep = math.ceil((self.cFra+1)/self.NSet) - 1
                     self.cSet = (self.cFra % self.NSet)
-
                     self._readSig()
                     self._performReco()
                     self._saveImg()
@@ -233,8 +220,9 @@ class SiemensTwixReco:
         self.sig = self.sig.permute(0,2,3,1)
         self.acs = self.acs.permute(0,2,3,1) if first_read_acs else self.acs
 
-        self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, grappa_kernel=self.grappa_kernel, **self.kwargs)
-        
+        if not self.no_recon:
+            self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, delta=self.caipiDelta, grappa_kernel=self.grappa_kernel, quiet=True, **self.kwargs)
+
         self.sig = self.sig.permute(0,3,1,2)
         self.sig = self.sig.cpu().numpy()
 
@@ -244,29 +232,29 @@ class SiemensTwixReco:
 
         if self.doPhaseCorr:
             self.sig = self._performPhaseCorr(self.sig, self.twix.phasecor)
-
+        
         self._performRampRegrid()
         self._performGrappa()
         self._fixShapeAndIFFT()
+
 
     def saveToNifTI(self, filepath, to_dicom_range=False):
         try:
             assert self.img is not None
             self.img = self.img.squeeze()
-            #self.img = np.flip(self.img, 0)
-            #self.img = self.img.swapaxes(0,2).swapaxes(1,2)
+
             if len(self.NFra) == 1:
                 if to_dicom_range:
                     self.img = np.int16(range_normalize(self.img, 0, 4095))
-                scan_img = nib.Nifti1Image(self.img, affine=np.eye(4)) # get_siemens_twix_rotation_matrix(self.filepath))
+                scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
                 nib.save(scan_img, filepath)
             else:
                 for f in self.NFra:
                     img = self.img[...,f]
                     if to_dicom_range:
                         img = np.int16(range_normalize(img, 0, 4095))
-                    scan_img = nib.Nifti1Image(img, affine=np.eye(4)) # affine=get_siemens_twix_rotation_matrix(self.filepath))
-                    nib.save(scan_img, f"{filepath}_{f}")
+                    scan_img = nib.Nifti1Image(img, affine=np.eye(4))
+                    nib.save(scan_img, f"{filepath}_frame_{f}")
 
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
@@ -290,7 +278,7 @@ class SiemensTwixReco:
     #         ds.InstanceNumber = s+1
     #         ds.Rows = img.shape[0]
     #         ds.Columns = img.shape[1]
-    #         ds.PixelSpacing = [0.8, 0.8]
+    #         ds.PixelSpacing = [0.8, 0.8]  # Adjust pixel spacing as needed
     #         ds.BitsAllocated = 16
     #         ds.BitsStored = 12
     #         ds.PhotometricInterpretation = "MONOCHROME2"
@@ -303,7 +291,7 @@ class SiemensTwixReco:
     #         ds.is_implicit_VR = True
 
     #         # Save the DICOM file
-    #         ds.save_as(os.path.join(filepath, f"{uid}-{s}.dcm"))
+    #         ds.save_as(os.path.join(filepath, f"tg220462-0004_001_000027_{uid}-{s}.dcm"))
 
     def _saveImg(self):
         if self.img is None:
@@ -314,10 +302,3 @@ class SiemensTwixReco:
             self.img = np.zeros(tuple(sz[:4] + [self.NSli, len(self.NFra), self.NEco]), dtype=self.sig.dtype)
 
         self.img[0,..., self.cSliSort, self.cFra, self.cEco] = np.sqrt(np.sum(np.abs(np.flip(self.sig, 1))**2, axis=0))
-
-
-if __name__ == "__main__":
-    filename = sys.argv[1]
-    scan = SiemensTwixReco(filename, kernel_size=(4,4,5), cuda=True, cuda_mode="application", lambda_=1e-4, batch_size=20)
-    scan.runReco()
-    scan.saveToNifTI(sys.argv[2])
