@@ -4,7 +4,7 @@ Perform GRAPPA-ND reconstruction of Siemens TWIX data.
 ## Clone
 You need to clone recusively by doing:
 ```bash
-  git clone --recurse-submodules --remote-submodules  git@github.com:mbertrait/siemens_twix_grappa_recon.git
+  git clone git@github.com:mbertrait/siemens_twix_grappa_recon.git
 ```
 
 ## Install
