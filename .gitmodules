@@ -1,5 +1,0 @@
-[submodule "grappa"]
-	path = grappa
-	url = git@github.com:mbertrait/ggrappa.git
-	branch = main
-    ignore = all

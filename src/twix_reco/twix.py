@@ -4,15 +4,15 @@ import math
 import torch
 import scipy
 import nibabel as nib
-#import pydicom
+
 import logging
 import sys
 
-
-from grappa.grappaND import GRAPPA_Recon
+from ggrappa import GRAPPA_Recon
 from tqdm import tqdm
 
-from twix_utils import range_normalize
+
+from .twix_utils import range_normalize
 
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +56,7 @@ class SiemensTwixReco:
         self.centCol = int(self.twix.image.centerCol[0])
         self.centLin = int(self.twix.image.centerLin[0])
         self.centPar = int(self.twix.image.centerPar[0])
+        self.recon_times = {}
 
         self.sig = None
         self.grappa_kernel = None
@@ -63,7 +64,7 @@ class SiemensTwixReco:
         self.multibandFactor = 1
 
         if 'chronSliceIndices' in self.twix.hdr.Meas:
-            self.chronSlices = np.fromstring(self.twix.hdr.Meas.chronSliceIndices, dtype=int, sep=' ')[:self.NSli]# +1
+            self.chronSlices = np.fromstring(self.twix.hdr.Meas.chronSliceIndices, dtype=int, sep=' ')[:self.NSli]
         else:
             self.chronSlices = np.arange(self.NSli)
         
@@ -77,6 +78,7 @@ class SiemensTwixReco:
 
         if self.NPar == 1:
             self.af[1] = 1
+
 
         self.kwargs = kwargs
 
@@ -265,33 +267,6 @@ class SiemensTwixReco:
             np.save(filepath, self.img.squeeze())
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
-
-    # def saveToDICOM(self, filepath):
-    #     img = np.int16(range_normalize(self.img, 0, 4095))
-    #     uid = pydicom.uid.generate_uid()
-    #     for s in range(self.img.shape[2]):
-    #         ds = pydicom.Dataset()
-    #         ds.PatientID = '123456'
-    #         ds.Modality = 'MR'
-    #         ds.StudyDate = '20240908'
-    #         ds.SeriesDate = uid
-    #         ds.InstanceNumber = s+1
-    #         ds.Rows = img.shape[0]
-    #         ds.Columns = img.shape[1]
-    #         ds.PixelSpacing = [0.8, 0.8]  # Adjust pixel spacing as needed
-    #         ds.BitsAllocated = 16
-    #         ds.BitsStored = 12
-    #         ds.PhotometricInterpretation = "MONOCHROME2"
-    #         ds.PixelRepresentation = 0  # Unsigned integer
-    #         ds.SamplesPerPixel = 1
-
-    #         # Set Pixel Data tag
-    #         ds.PixelData = img[...,s,0].tostring()
-    #         ds.is_little_endian = True
-    #         ds.is_implicit_VR = True
-
-    #         # Save the DICOM file
-    #         ds.save_as(os.path.join(filepath, f"tg220462-0004_001_000027_{uid}-{s}.dcm"))
 
     def _saveImg(self):
         if self.img is None:

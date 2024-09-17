@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twix_reco"
+version = "1.0.0"
+description = "A CLI tool for Siemens Twix scan reconstruction using gGRAPPA (generalized GRAPPA)"
+authors = [
+    { name="Maxime Bertrait", email="maxime.bertrait@cea.fr" }
+]
+license = { text="MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+# Define any dependencies your project needs
+dependencies = [
+  "pyMapVBVD>=0.5.7",
+  "numpy>=1.26.4",
+  "torch>=2.3.0",
+  "scipy>=1.13.0",
+  "nibabel>=5.2.1",
+  "tqdm>=4.66.4",
+  "gGRAPPA @ git+https://github.com/mbertrait/ggrappa"
+]
+
+[project.scripts]
+twix_reco = "twix_reco.cli:main"
