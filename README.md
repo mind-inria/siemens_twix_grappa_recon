@@ -1,6 +1,5 @@
 # Siemens TWIX GRAPPA Reconstrution
-Perform GRAPPA-ND reconstruction of Siemens TWIX data. You need to clone
-recursively the repo for submodule to be cloned.
+Perform GRAPPA-ND reconstruction of Siemens TWIX data.
 
 ## Clone
 You need to clone recusively by doing:
@@ -8,7 +7,14 @@ You need to clone recusively by doing:
   git clone --recurse-submodules --remote-submodules  git@github.com:mbertrait/siemens_twix_grappa_recon.git
 ```
 
+## Install
+You need to clone recusively by doing:
+```bash
+  cd siemens_twix_recon
+  pip install .
+```
+
 ## Usage
 ```bash
-  python twix_reco.py [input twix_fullpath] [destination_folder_fullpath]
+  twix_reco [input twix_fullpath] [destination_folder_fullpath]
 ```
