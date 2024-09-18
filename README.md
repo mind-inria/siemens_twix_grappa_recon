@@ -1,5 +1,5 @@
 # Siemens TWIX Recon
-Perform GRAPPA-ND reconstruction of Siemens TWIX data.
+
 Twix Recon is a command-line interface (CLI) tool designed for reconstructing Siemens TWIX raw data files. It processes .dat files, applies gGRAPPA reconstruction, and saves the results in NIfTI format. This tool supports GPU acceleration and offers options for tuning reconstruction parameters.
 
 ## Features
