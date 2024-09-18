@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import torch
 import scipy
@@ -143,3 +145,12 @@ def get_siemens_twix_rotation_matrix(filepath):
     mdh = mdb[0].mdh
     quat = mdh.SliceData.Quaternion
     return siemens_quat_to_rot_mat(quat)
+
+
+def get_filename(filepath, twix_obj, frame=None):
+    filename = (
+        f"{os.path.join(os.path.abspath(filepath), os.path.splitext(os.path.basename(twix_obj.filepath))[0])}"
+        f"{f'__frame_{frame}' if frame else ''}__gGRAPPAReco__ksz_{'_'.join(map(str, twix_obj.kwargs.get('kernel_size', ['4', '4', '5'])))}"
+        f"__l__{str(twix_obj.kwargs.get('lambda_', str(1e-4))).replace('.','_')}"
+    )
+    return filename

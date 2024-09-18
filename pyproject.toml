@@ -21,6 +21,7 @@ dependencies = [
   "scipy>=1.13.0",
   "nibabel>=5.2.1",
   "tqdm>=4.66.4",
+  "gt-twixtools>=1.0.1",
   "gGRAPPA @ git+https://github.com/mbertrait/ggrappa"
 ]
 

@@ -6,13 +6,13 @@ import scipy
 import nibabel as nib
 
 import logging
-import sys
+import warnings
 
 from ggrappa import GRAPPA_Recon
 from tqdm import tqdm
+from pathlib import Path
 
-
-from .twix_utils import range_normalize
+from .twix_utils import range_normalize, get_filename
 
 
 logging.basicConfig(level=logging.INFO)
@@ -21,8 +21,12 @@ logger = logging.getLogger(__name__)
 
 class SiemensTwixReco:
     def __init__(self, filepath, **kwargs):
+
+        logger.debug(f"{kwargs}")
+
         self.filepath = filepath
         self.twix = mapvbvd.mapVBVD(self.filepath, quiet=False)
+
         self.no_recon = False
 
         if isinstance(self.twix, list):
@@ -83,7 +87,9 @@ class SiemensTwixReco:
         self.kwargs = kwargs
 
     def _readSig(self):
-        self.sig = self.twix.image[:,:,:,:,self.cSli,0,0,self.cEco,self.cRep,self.cSet,:].swapaxes(0,1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self.sig = self.twix.image[:,:,:,:,self.cSli,0,0,self.cEco,self.cRep,self.cSet,:].swapaxes(0,1)
         self.sig = self.sig.squeeze()
         self.sig = torch.from_numpy(self.sig)
 
@@ -103,7 +109,7 @@ class SiemensTwixReco:
         
     def _performPhaseCorr(self, sig, pc_obj, pc_method="autocorr"):
         if self.doPhaseCorr:
-
+            
             pc = pc_obj[:,:,:,:,self.cSli,:,0,min(pc_obj.NEco, self.cEco),
                         min(pc_obj.NRep, self.cRep),min(pc_obj.NSet, self.cSet),:].swapaxes(0,1)[:,:,:,:,0,0,0,0,0,0,:,0,0,0,0,0]
 
@@ -198,7 +204,9 @@ class SiemensTwixReco:
         first_read_acs = self.acs is None
 
         if first_read_acs:
-            self.acs = self.twix.refscan[:,:,:,:,self.cSli,0,0,0,0,0,:].swapaxes(0,1)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                self.acs = self.twix.refscan[:,:,:,:,self.cSli,0,0,0,0,0,:].swapaxes(0,1)
             self.acs = self.acs.squeeze()
         
         if first_read_acs and self.doNoiseDecorr:
@@ -245,18 +253,22 @@ class SiemensTwixReco:
             assert self.img is not None
             self.img = self.img.squeeze()
 
+            Path(filepath).mkdir(parents=True, exist_ok=True)
+
             if len(self.NFra) == 1:
                 if to_dicom_range:
                     self.img = np.int16(range_normalize(self.img, 0, 4095))
                 scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
-                nib.save(scan_img, filepath)
+                filename = get_filename(filepath, self)
+                nib.save(scan_img, filename)
             else:
                 for f in self.NFra:
                     img = self.img[...,f]
                     if to_dicom_range:
                         img = np.int16(range_normalize(img, 0, 4095))
                     scan_img = nib.Nifti1Image(img, affine=np.eye(4))
-                    nib.save(scan_img, f"{filepath}_frame_{f}")
+                    filename = get_filename(filepath, self, f)
+                    nib.save(scan_img, filename)
 
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e

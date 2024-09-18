@@ -1,5 +1,6 @@
 import argparse
 import os
+import glob
 
 from .twix import SiemensTwixReco
 
@@ -49,8 +50,9 @@ def main():
     )
 
     parser.add_argument(
-        '-l', '--lambda', 
-        type=float, 
+        '-l', '--lambda',
+        type=float,
+        dest="lambda_", 
         default=1e-4,
         help="Pseudo-inverse regularization term strength"
     )
@@ -69,19 +71,30 @@ def main():
 
     parser.add_argument(
         '--gpu_mode', 
-        type=str, 
+        type=str,
         choices=['all', 'application', 'estimation'],
         default='all',
         help="Specify GPU mode: 'all', 'application', or 'estimation' (default: 'all'). \n\"all\" means both estimation and application of GRAPPA kernel is GPU based."
     )
 
+
     args = parser.parse_args()
 
-    reco = SiemensTwixReco(
-        filepath=args.scan_path
-    )
-    reco.runReco()
-    reco.saveToNifTI(os.path.join(args.output_dir, 'reco'), to_dicom_range=args.dcm_range)
+    if os.path.isdir(args.scan_path):
+        scans = glob.glob(os.path.join(os.path.abspath(args.scan_path), '*.dat'))
+    else:
+        scans = [os.path.abspath(args.scan_path)]
+
+    for scan in scans:
+        reco = SiemensTwixReco(
+            filepath=scan,
+            kernel_size=args.kernel_size,
+            lambda_=args.lambda_,
+            cuda=args.gpu,
+            cuda_mode=args.gpu_mode,
+        )
+        reco.runReco()
+        reco.saveToNifTI(args.output_dir, to_dicom_range=args.dcm_range)
 
 
 if __name__ == "__main__":
