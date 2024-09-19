@@ -29,7 +29,7 @@ After installation, a new command will be available: `twix_reco`.
 Run it from the command line with the required and optional arguments:
 
 ```bash
- twix_reco [scan_path] [options]
+ twix_recon [scan_path] [options]
 ```
 
 ### Arguments
@@ -51,23 +51,23 @@ Run it from the command line with the required and optional arguments:
 1. Reconstruct a single `.dat` file and save the result in the current directory:
 
     ```bash
-     twix_reco /path/to/data.dat
+     twix_recon /path/to/data.dat
     ```
 
 2. Reconstruct files in a directory, set a specific output directory, and use GPU acceleration:
 
     ```bash
-    twix_reco /path/to/data_directory -o /path/to/output_directory --gpu
+    twix_recon /path/to/data_directory -o /path/to/output_directory --gpu
     ```
 
 3. Set a custom kernel size (ky,kz,kx): (5,5,3), batch size: 2, and adjust regularization: 1e-5:
 
     ```bash
-    twix_reco /path/to/data.dat -k 5,5,3 -b 2 -l 1e-5
+    twix_recon /path/to/data.dat -k 5,5,3 -b 2 -l 1e-5
     ```
 
 4. Rescale intensities to DICOM range and use a specific GPU mode: here GPU only for GRAPPA kernel weights estimation:
 
     ```bash
-    twix_reco /path/to/data.dat --dcm_range --gpu --gpu_mode estimation
+    twix_recon /path/to/data.dat --dcm_range --gpu --gpu_mode estimation
     ```
