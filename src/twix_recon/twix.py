@@ -1,5 +1,6 @@
 import mapvbvd
 import numpy as np
+import scipy as sp
 import math
 import torch
 import scipy
@@ -47,7 +48,6 @@ class SiemensTwixReco:
                 self.twix[name].flagSkipToFirstLine = name not in ['image']
                 self.twix[name].flagRampSampRegrid = name not in ['noise', 'vop'] and self.doRampRegrid
                 self.twix[name].flagIgnoreSeg = not self.doPhaseCorr
-        
         self.NCha = int(self.twix.image.NCha)
         self.NCol = int(self.twix.image.NCol) // 2
         self.NLin = int(self.twix.image.NLin)
@@ -107,7 +107,7 @@ class SiemensTwixReco:
         else:
             self.D = np.eye(self.NCha)
         
-    def _performPhaseCorr(self, sig, pc_obj, pc_method="autocorr"):
+    def _performPhaseCorr(self, sig, pc_obj, pc_method="autocorracrossseg"):
         if self.doPhaseCorr:
             
             pc = pc_obj[:,:,:,:,self.cSli,:,0,min(pc_obj.NEco, self.cEco),
@@ -120,7 +120,7 @@ class SiemensTwixReco:
 
             match pc_method:
                 case "autocorr":
-                    x = np.linspace(-0.5, 0.5, self.NCol)
+                    x = np.arange(-self.NCol//2, np.ceil(self.NCol/2))
 
                     slope = self.NCol * np.angle(np.sum(np.sum(np.conj(pc[:, :-1, 0, 0, :]) * pc[:, 1:, 0, 0, :], axis=1), axis=0))
                     intercept = 0
@@ -129,22 +129,68 @@ class SiemensTwixReco:
 
                     pc = np.exp(1j * pc)
                     pc = pc[None, :, None, None, :]
-
+                
+                case "autocorracrossseg":
+                    x = np.arange(-self.NCol//2, np.ceil(self.NCol/2))
+                    dphi1 = (
+                        pc[:, 1:, 0, 0, 1] * np.conj(pc[:, 1:, 0, 0, 0])
+                    ) * np.conj(
+                        pc[:, :-1, 0, 0, 1] * np.conj(pc[:, :-1, 0, 0, 0])
+                    )
+                    # Sum columns and multiply with a window (Hann optional, omitted here)
+                    dphi1 = np.sum(dphi1 * (self.NCol - 1), axis=1).sum(0)
+                    dphi1 = np.angle(dphi1)
+                    dphi0 = pc[:, 1:-1, 0, 0, 0] * np.conj(pc[:, 1:-1, 0, 0, 1])
+                    dphi0 = dphi0 * np.exp(1j * (x[1:-1][None] * dphi1))
+                    dphi0 = np.sum(dphi0 * (self.NCol - 2), axis=1).sum(0)
+                    dphi0 = -np.angle(dphi0)
+                    pc = np.zeros((self.NCol, 2), dtype=pc.dtype)
+                    pc[:, 0] = -0.5 * (dphi0 + dphi1 * x)
+                    pc[:, 1] = -pc[:, 0]
+                    pc = np.exp(1j * pc)
+                    pc = pc[None, :, None, None, :]
+            
             sig = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(sig, axes=1), axis=1, norm='ortho'), axes=1)
             sig = pc.conj() * sig
             sig = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(sig, axes=1), axis=1, norm='ortho'), axes=1)
 
         return sig
     
-    def _performRampRegrid(self, sig=None):
-        if self.doRampRegrid:
+    def _performRampRegrid(self, sig=None, twix=None):
+        if not self.doRampRegrid or self.doRampRegrid == 1:
             if sig is None:
                 self.sig = self.sig.sum(-1)
             else:
                 sig = sig.sum(-1)
+                return sig
+            return
+        
+        bThisSig = False
+        if sig is None:
+            sig = self.sig
+            bThisSig = True
+        if twix is None:
+            twix = self.twix.image
 
-        if sig is not None:
-            return sig
+        # Generate source and target trajectories
+        srctrj = torch.from_numpy(twix.rampSampTrj[::2])
+        trgtrj = torch.linspace(srctrj.min(), srctrj.max(), sig.shape[1])
+        # Correct for readout shifts
+        ro_shift = twix.ROoffcenter[0]
+        deltak = torch.abs(torch.diff(srctrj)).max()
+        phase = torch.arange(self.NCol) * deltak * ro_shift
+
+
+        # Calculate phase factor
+        phase_factor = torch.exp(1j * 2 * np.pi * (phase - ro_shift * srctrj))
+        sig = sig *  phase_factor[None, :, None, None]
+        # FIXME: This is always on CPU and on numpy
+        sig = torch.from_numpy(sp.interpolate.interp1d(srctrj, sig.real, axis=1)(trgtrj) + 1j * sp.interpolate.interp1d(srctrj, sig.imag, axis=1)(trgtrj))
+        
+        if bThisSig:
+            self.sig = sig
+
+        return sig
 
     def _performNoiseDecorr(self, data):
         data_sz = data.shape
@@ -215,6 +261,7 @@ class SiemensTwixReco:
         if first_read_acs and self.doRefPhaseCorr:
             self.acs = self._performPhaseCorr(self.acs, self.twix.refscanPC)
         
+        self.acs = torch.from_numpy(self.acs) if first_read_acs and type(self.acs) is not torch.Tensor else self.acs
         if first_read_acs and self.doRampRegrid:
             self.acs = self._performRampRegrid(self.acs)
         
@@ -224,8 +271,6 @@ class SiemensTwixReco:
         if len(self.acs.shape) == 3:
             self.acs = self.acs[:, :, :, None]
         
-        self.acs = torch.from_numpy(self.acs) if first_read_acs and type(self.acs) is not torch.Tensor else self.acs
-        self.sig = torch.from_numpy(self.sig) if type(self.sig) is not torch.Tensor else self.sig
 
         self.sig = self.sig.permute(0,2,3,1)
         self.acs = self.acs.permute(0,2,3,1) if first_read_acs else self.acs
@@ -243,6 +288,7 @@ class SiemensTwixReco:
         if self.doPhaseCorr:
             self.sig = self._performPhaseCorr(self.sig, self.twix.phasecor)
         
+        self.sig = torch.from_numpy(self.sig) if type(self.sig) is not torch.Tensor else self.sig
         self._performRampRegrid()
         self._performGrappa()
         self._fixShapeAndIFFT()
