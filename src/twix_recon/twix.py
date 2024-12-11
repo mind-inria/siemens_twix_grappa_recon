@@ -63,7 +63,7 @@ class SiemensTwixReco:
         self.recon_times = {}
 
         self.sig = None
-        self.grappa_kernel = None
+        self.grappa_recon_spec = None
         self.img = None
         self.multibandFactor = 1
 
@@ -276,7 +276,7 @@ class SiemensTwixReco:
         self.acs = self.acs.permute(0,2,3,1) if first_read_acs else self.acs
 
         if not self.no_recon:
-            self.sig, self.grappa_kernel = GRAPPA_Recon(self.sig, self.acs, af=self.af, delta=self.caipiDelta, grappa_kernel=self.grappa_kernel, quiet=True, **self.kwargs)
+            self.sig, self.grappa_recon_spec = GRAPPA_Recon(self.sig, self.acs, af=self.af, delta=self.caipiDelta, grappa_recon_spec=self.grappa_recon_spec, quiet=True, **self.kwargs)
 
         self.sig = self.sig.permute(0,3,1,2)
         self.sig = self.sig.cpu().numpy()

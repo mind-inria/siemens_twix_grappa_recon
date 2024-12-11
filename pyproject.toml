@@ -22,7 +22,7 @@ dependencies = [
   "nibabel>=5.2.1",
   "tqdm>=4.66.4",
   "gt-twixtools>=1.0.1",
-  "gGRAPPA @ git+https://github.com/mbertrait/ggrappa"
+  "gGRAPPA @ git+https://github.com/mind-inria/ggrappa"
 ]
 
 [project.scripts]
