@@ -301,20 +301,13 @@ class SiemensTwixReco:
 
             Path(filepath).mkdir(parents=True, exist_ok=True)
 
-            if len(self.NFra) == 1:
-                if to_dicom_range:
-                    self.img = np.int16(range_normalize(self.img, 0, 4095))
-                scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
-                filename = get_filename(filepath, self)
-                nib.save(scan_img, filename)
-            else:
-                for f in self.NFra:
-                    img = self.img[...,f]
-                    if to_dicom_range:
-                        img = np.int16(range_normalize(img, 0, 4095))
-                    scan_img = nib.Nifti1Image(img, affine=np.eye(4))
-                    filename = get_filename(filepath, self, f)
-                    nib.save(scan_img, filename)
+            if len(self.NFra) != 1:
+                filename += ".nii.gz"
+            if to_dicom_range:
+                self.img = np.int16(range_normalize(self.img, 0, 4095))
+            scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
+            filename = get_filename(filepath, self)
+            nib.save(scan_img, filename)
 
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
