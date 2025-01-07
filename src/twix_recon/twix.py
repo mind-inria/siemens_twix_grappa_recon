@@ -301,12 +301,12 @@ class SiemensTwixReco:
 
             Path(filepath).mkdir(parents=True, exist_ok=True)
 
-            if len(self.NFra) != 1:
-                filename += ".nii.gz"
             if to_dicom_range:
                 self.img = np.int16(range_normalize(self.img, 0, 4095))
             scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
             filename = get_filename(filepath, self)
+            if len(self.NFra) != 1:
+                filename += ".nii.gz"
             nib.save(scan_img, filename)
 
         except AssertionError as e:
