@@ -13,7 +13,7 @@ from ggrappa import GRAPPA_Recon
 from tqdm import tqdm
 from pathlib import Path
 
-from .twix_utils import range_normalize, get_filename
+from .twix_utils import range_normalize, get_filename, siemens_quat_to_rot_mat
 
 
 logging.basicConfig(level=logging.INFO)
@@ -214,8 +214,9 @@ class SiemensTwixReco:
         sig_r[:, ixin1[1]:ixin2[1], ixin1[2]:ixin2[2], ixin1[3]:ixin2[3]] = self.sig[:, ixout1[1]:ixout2[1], ixout1[2]:ixout2[2], ixout1[3]:ixout2[3]]
 
         for nc in range(sig_r.shape[0]):
-            sig_tmp = torch.from_numpy(sig_r[nc]).cuda()
-            sig_tmp = torch.fft.fftshift(torch.fft.fftn(torch.fft.fftshift(sig_tmp, dim=(0,1,2)), dim=(0,1,2), norm='ortho'), dim=(0,1,2))
+            sig_tmp = torch.from_numpy(sig_r[nc])
+            sig_tmp = sig_tmp.cuda() if torch.cuda.is_available() else sig_tmp
+            sig_tmp = torch.fft.ifftshift(torch.fft.ifftn(torch.fft.fftshift(sig_tmp, dim=(0,1,2)), dim=(0,1,2), norm='ortho'), dim=(0,1,2))
             sig_r[nc] = sig_tmp.cpu().numpy()
         
         self.sig = sig_r
@@ -303,7 +304,8 @@ class SiemensTwixReco:
 
             if to_dicom_range:
                 self.img = np.int16(range_normalize(self.img, 0, 4095))
-            scan_img = nib.Nifti1Image(self.img, affine=np.eye(4))
+            siemens_quat = self.twix.image.slicePos[0][-4:]
+            scan_img = nib.Nifti1Image(self.img, affine=siemens_quat_to_rot_mat(siemens_quat))
             filename = get_filename(filepath, self)
             if len(self.NFra) != 1:
                 filename += ".nii.gz"
@@ -325,6 +327,6 @@ class SiemensTwixReco:
             sz[:len(self.sig.shape)] = self.sig.shape
             sz[0] = 1
 
-            self.img = np.zeros(tuple(sz[:4] + [self.NSli, len(self.NFra), self.NEco]), dtype=self.sig.dtype)
+            self.img = np.zeros(tuple(sz[:4] + [self.NSli, len(self.NFra), self.NEco]), dtype=np.float32)
 
-        self.img[0,..., self.cSliSort, self.cFra, self.cEco] = np.sqrt(np.sum(np.abs(np.flip(self.sig, 1))**2, axis=0))
+        self.img[0,..., self.cSliSort, self.cFra, self.cEco] = np.linalg.norm(self.sig, axis=0)

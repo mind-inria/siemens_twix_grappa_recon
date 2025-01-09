@@ -66,85 +66,35 @@ def ifftn(sig, dims):
     return np.fft.fftshift(np.fft.ifftn(np.fft.fftshift(sig, axes=dims), axes=dims), axes=dims)
 
 
-def siemens_quat_to_rot_mat(q):
-    ds = 2.0 / np.sum(q**2)
-    dxs = q[1] * ds
-    dys = q[2] * ds
-    dzs = q[3] * ds
-    dwx = q[0] * dxs
-    dwy = q[0] * dys
-    dwz = q[0] * dzs
-    dxx = q[1] * dxs
-    dxy = q[1] * dys
-    dxz = q[1] * dzs
-    dyy = q[2] * dys
-    dyz = q[2] * dzs
-    dzz = q[3] * dzs
-    
-    R = np.zeros((4, 4))
-    R[0, 0] = 1.0 - (dyy + dzz)
-    R[0, 1] = dxy + dwz
-    R[0, 2] = dxz - dwy
-    R[1, 0] = dxy - dwz
-    R[1, 1] = 1.0 - (dxx + dzz)
-    R[1, 2] = dyz + dwx
-    R[2, 0] = dxz + dwy
-    R[2, 1] = dyz - dwx
-    R[2, 2] = 1.0 - (dxx + dyy)
-
-    R[:2] = -R[:2]
-    
-    R[-1,-1] = 1
-        
-    return R
-
-
-def siemens_quat_to_rot_mat2(quat):
+def siemens_quat_to_rot_mat(quat):
     """
     Calculate the rotation matrix from Siemens Twix quaternion.
     """
-    a = quat[0]
-    b = quat[1]
-    c = quat[2]
-    d = quat[3]
+    a = quat[1]
+    b = quat[2]
+    c = quat[3]
+    d = quat[0]
 
     R = np.zeros((4, 4))
     
-    R[0,0] = 1.0 - 2.0 * (b * b + c * c)
-    R[0,1] = 2.0 * (a * b - c * d)
+    R[0,1] = 1.0 - 2.0 * (b * b + c * c)
+    R[0,0] = 2.0 * (a * b - c * d)
     R[0,2] = 2.0 * (a * c + b * d)
 
-    R[1,0] = 2.0 * (a * b + c * d)
-    R[1,1] = 1.0 - 2.0 * (a * a + c * c)
+    R[1,1] = 2.0 * (a * b + c * d)
+    R[1,0] = 1.0 - 2.0 * (a * a + c * c)
     R[1,2] = 2.0 * (b * c - a * d)
 
-    R[2,0] = 2.0 * (a * c - b * d)
-    R[2,1] = 2.0 * (b * c + a * d)
+    R[2,1] = 2.0 * (a * c - b * d)
+    R[2,0] = 2.0 * (b * c + a * d)
     R[2,2] = 1.0 - 2.0 * (a * a + b * b)
 
+    if (np.linalg.det(R[:3, :3]) < 0):
+        R[2] = -R[2]
+        
     R[-1,-1] = 1
 
-    #tmp = R[:,1]
-    #R[:,1] = R[:,0]
-    #R[:,0] = tmp
-
-    #R[:,:2] = -R[:,:2]
-
     return R
-
-
-def get_siemens_twix_rotation_matrix(filepath):
-    """
-    Extract the orientation matrix from Siemens Twix (twixtools) scan object.
-    """
-    from twixtools import read_twix
-    twix_obj = read_twix(filepath)
-    if type(twix_obj) is list:
-        twix_obj = twix_obj[-1]
-    mdb = twix_obj['mdb']
-    mdh = mdb[0].mdh
-    quat = mdh.SliceData.Quaternion
-    return siemens_quat_to_rot_mat(quat)
 
 
 def get_filename(filepath, twix_obj, frame=None):
