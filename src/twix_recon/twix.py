@@ -157,7 +157,12 @@ class SiemensTwixReco:
         return sig
     
     def _performRampRegrid(self, sig=None, twix=None):
-        if self.doRampRegrid:
+        if not self.doRampRegrid:
+            if sig is None:
+                return
+            else 
+                return sig
+        elif self.doRampRegrid == 1:
             if sig is None:
                 self.sig = self.sig.sum(-1)
             else:
