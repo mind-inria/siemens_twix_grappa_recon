@@ -160,7 +160,7 @@ class SiemensTwixReco:
         if not self.doRampRegrid:
             if sig is None:
                 return
-            else 
+            else:
                 return sig
         elif self.doRampRegrid == 1:
             if sig is None:
