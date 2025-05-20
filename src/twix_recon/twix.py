@@ -110,8 +110,8 @@ class SiemensTwixReco:
     def _performPhaseCorr(self, sig, pc_obj, pc_method="autocorracrossseg"):
         if self.doPhaseCorr:
             
-            pc = pc_obj[:,:,:,:,self.cSli,:,0,min(pc_obj.NEco, self.cEco),
-                        min(pc_obj.NRep, self.cRep),min(pc_obj.NSet, self.cSet),:].swapaxes(0,1)[:,:,:,:,0,0,0,0,0,0,:,0,0,0,0,0]
+            pc = pc_obj[:,:,:,:,self.cSli,:,0,min(pc_obj.NEco-1, self.cEco),
+                        min(pc_obj.NRep-1, self.cRep),min(pc_obj.NSet-1, self.cSet),:].swapaxes(0,1)[:,:,:,:,0,0,0,0,0,0,:,0,0,0,0,0]
 
             if self.doNoiseDecorr:
                 pc = self._performNoiseDecorr(pc)
