@@ -206,7 +206,7 @@ class SiemensTwixReco:
     def _fixShapeAndIFFT(self):
         sz = self.sig.shape
         trg_sz = [self.sig.shape[0], int(self.twix.hdr.Meas.iRoFTLength)//2, int(self.twix.hdr.Meas.iPEFTLength), int(self.twix.hdr.Meas.i3DFTLength)]
-        diff_sz = np.array(trg_sz) - np.array(sz)
+        diff_sz = np.array(sz) - np.array(trg_sz)
         shift = np.floor(diff_sz / 2).astype(int)
 
         ixin1 = np.maximum(shift, 0)
@@ -215,8 +215,7 @@ class SiemensTwixReco:
         ixout2 = np.abs(np.minimum(shift, 0)) + np.minimum(sz, trg_sz)
 
         sig_r = np.zeros(trg_sz, dtype=self.sig.dtype)
-
-        sig_r[:, ixin1[1]:ixin2[1], ixin1[2]:ixin2[2], ixin1[3]:ixin2[3]] = self.sig[:, ixout1[1]:ixout2[1], ixout1[2]:ixout2[2], ixout1[3]:ixout2[3]]
+        sig_r[:, ixout1[1]:ixout2[1], ixout1[2]:ixout2[2], ixout1[3]:ixout2[3]] = self.sig[:, ixin1[1]:ixin2[1], ixin1[2]:ixin2[2], ixin1[3]:ixin2[3]]
 
         for nc in range(sig_r.shape[0]):
             sig_tmp = torch.from_numpy(sig_r[nc])
@@ -225,6 +224,22 @@ class SiemensTwixReco:
             sig_r[nc] = sig_tmp.cpu().numpy()
         
         self.sig = sig_r
+        sz = trg_sz
+
+        # image space
+        trg_sz = [self.sig.shape[0], int(self.twix.hdr.Config.NImageCols), int(self.twix.hdr.Config.NImageLins), int(self.twix.hdr.Config.NoImagesPerSlab)]
+        diff_sz = sz - np.array(trg_sz)
+        shift = np.floor(diff_sz / 2).astype(int)
+
+        ixin1 = np.maximum(shift, 0)
+        ixin2 = np.maximum(shift, 0) + np.minimum(sz, trg_sz)
+        ixout1 = np.abs(np.minimum(shift, 0))
+        ixout2 = np.abs(np.minimum(shift, 0)) + np.minimum(sz, trg_sz)
+
+        sig_temp = np.zeros(trg_sz, dtype=self.sig.dtype)
+        sig_temp[:, ixout1[1]:ixout2[1], ixout1[2]:ixout2[2], ixout1[3]:ixout2[3]] = self.sig[:, ixin1[1]:ixin2[1], ixin1[2]:ixin2[2], ixin1[3]:ixin2[3]]
+
+        self.sig = sig_temp
     
     def runReco(self):
         if self.doNoiseDecorr:
