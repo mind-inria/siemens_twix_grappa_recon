@@ -65,6 +65,9 @@ class SiemensTwixReco:
         self.sig = None
         self.grappa_recon_spec = None
         self.img = None
+        self.complex_img = None
+        self.kspace_sig = None
+        self.acs_sig = None
         self.multibandFactor = 1
 
         if 'chronSliceIndices' in self.twix.hdr.Meas:
@@ -202,8 +205,16 @@ class SiemensTwixReco:
         data = self.D @ data.reshape(data.shape[0], -1)
         data = data.reshape(data_sz)
         return data
+    
+    def _pad_for_partialFourier(self,sig):
+        sz = sig.shape
+        trg_sz = (sz[0], int(self.twix.hdr.Meas.iRoFTLength)//2, int(self.twix.hdr.Meas.iPEFTLength), int(self.twix.hdr.Meas.i3DFTLength))
+        if not sz == trg_sz:
+            sig_padded = np.zeros(trg_sz, dtype=sig.dtype)
+            sig_padded[:,(trg_sz[1]-sz[1]):,(trg_sz[2]-sz[2]):,(trg_sz[3]-sz[3]):] = sig
+            return sig_padded
 
-    def _fixShapeAndIFFT(self):
+    def _fixShape(self):
         sz = self.sig.shape
         trg_sz = [self.sig.shape[0], int(self.twix.hdr.Meas.iRoFTLength)//2, int(self.twix.hdr.Meas.iPEFTLength), int(self.twix.hdr.Meas.i3DFTLength)]
         diff_sz = np.array(trg_sz) - np.array(sz)
@@ -217,7 +228,10 @@ class SiemensTwixReco:
         sig_r = np.zeros(trg_sz, dtype=self.sig.dtype)
 
         sig_r[:, ixin1[1]:ixin2[1], ixin1[2]:ixin2[2], ixin1[3]:ixin2[3]] = self.sig[:, ixout1[1]:ixout2[1], ixout1[2]:ixout2[2], ixout1[3]:ixout2[3]]
-
+        return sig_r
+    
+    def _fixShapeAndIFFT(self):
+        sig_r = self._fixShape()
         for nc in range(sig_r.shape[0]):
             sig_tmp = torch.from_numpy(sig_r[nc])
             sig_tmp = sig_tmp.cuda() if torch.cuda.is_available() else sig_tmp
@@ -247,10 +261,54 @@ class SiemensTwixReco:
                     self.cRep = math.ceil((self.cFra+1)/self.NSet) - 1
                     self.cSet = (self.cFra % self.NSet)
                     self._readSig()
+                    self._saveSig() # save raw signal before grappa recon
+                    self._readAcs()
                     self._performReco()
+                    self._saveAcs()
                     self._saveImg()
 
                     torch.cuda.empty_cache()
+
+    def ReadSigOnly(self):
+        if self.doNoiseDecorr:
+            self._calcNoiseDecorrMatrix()
+
+        for e in range(self.NEco):
+            self.cEco = e
+            for s in tqdm(range(self.NSli)):
+                
+                self.cSli = s
+                self.cSliSort = self.chronSlices[s]
+                if self.cSliSort > self.NSli/self.multibandFactor:
+                    continue
+
+                self.cSliSort = (self.cSliSort + np.arange(self.multibandFactor) * self.NSli/self.multibandFactor).astype(int)
+                self.acs = None
+                
+                for f in tqdm(self.NFra):
+                    self.cFra = self.NFra[f]
+                    self.cRep = math.ceil((self.cFra+1)/self.NSet) - 1
+                    self.cSet = (self.cFra % self.NSet)
+                    self._readSig()
+                    if self.doNoiseDecorr:
+                        self.sig = self._performNoiseDecorr(self.sig)
+                    if self.doPhaseCorr:
+                        self.sig = self._performPhaseCorr(self.sig, self.twix.phasecor)
+                    self.sig = self.sig.numpy()
+                    self.sig = self._pad_for_partialFourier()
+                    self._saveSig()
+
+    def _readAcs(self):
+        self.acs = self.twix.refscan[:,:,:,:,self.cSli,0,0,self.cEco,self.cRep,self.cSet,:].swapaxes(0,1)
+        self.acs = self.acs.squeeze()
+        if self.doNoiseDecorr:
+            self.acs = self._performNoiseDecorr(self.acs)
+        if self.doRefPhaseCorr:
+            self.acs = self._performPhaseCorr(self.acs, self.twix.refscanPC)
+        self.acs = torch.from_numpy(self.acs) if type(self.acs) is not torch.Tensor else self.acs
+        if self.doRampRegrid:
+            self.acs = self._performRampRegrid(self.acs)
+        self.acs = self.acs.permute(0,2,3,1)
 
     def _performGrappa(self):
         first_read_acs = self.acs is None
@@ -294,9 +352,10 @@ class SiemensTwixReco:
         if self.doPhaseCorr:
             self.sig = self._performPhaseCorr(self.sig, self.twix.phasecor)
         
-        self.sig = torch.from_numpy(self.sig) if type(self.sig) is not torch.Tensor else self.sig
+        self.sig = torch.from_n_pad_for_partialFourierumpy(self.sig) if type(self.sig) is not torch.Tensor else self.sig
         self._performRampRegrid()
         self._performGrappa()
+        self.sig = self._pad_for_partialFourier(self.sig)
         self._fixShapeAndIFFT()
 
 
@@ -326,12 +385,41 @@ class SiemensTwixReco:
         except AssertionError as e:
             raise Exception("You need to call performReco() first to populate the 'self.img' variable.") from e
 
+    def saveComplexToNpy(self, filepath):
+        try:
+            assert self.complex_img is not None
+            np.save(filepath, self.complex_img.squeeze())
+        except AssertionError as e:
+            raise Exception("You need to call performReco() first to populate 'self.complex_img'.") from e
+        
     def _saveImg(self):
-        if self.img is None:
+        if self.img is None or self.complex_img is None:
             sz = [1,1,1,1,1]
             sz[:len(self.sig.shape)] = self.sig.shape
-            sz[0] = 1
-
-            self.img = np.zeros(tuple(sz[:4] + [self.NSli, len(self.NFra), self.NEco]), dtype=np.float32)
-
+            if self.img is None:
+                self.img = np.zeros((1, *sz[1:4], self.NSli, len(self.NFra), self.NEco), dtype=np.float32)
+            if self.complex_img is None:       
+                self.complex_img = np.zeros((self.NCha, *sz[1:4], self.NSli, len(self.NFra), self.NEco), dtype=np.complex64)
+        # Save magnitude image (single-channel)
         self.img[0,..., self.cSliSort, self.cFra, self.cEco] = np.linalg.norm(self.sig, axis=0)
+        # Save multi-channel complex-valued volume
+        self.complex_img[..., self.cSliSort, self.cFra, self.cEco] = self.sig[...,None]
+        
+    def _saveSig(self):
+        if self.kspace_sig is None:
+            sz = [1,1,1,1,1]
+            sz[:len(self.sig.shape)] = self.sig.shape
+            self.kspace_sig = np.zeros((self.NCha, *sz[1:4], self.NSli, len(self.NFra), self.NEco), dtype=np.complex64)
+        # Save multi-channel complex-valued raw_kspace data
+        self.kspace_sig[..., self.cSliSort, self.cFra, self.cEco] = self.sig[...,None]
+        
+    def _saveAcs(self):
+        self.acs = self.acs.permute(0,3,1,2)
+        if self.acs_sig is None:
+            sz = [1,1,1,1,1]
+            sz[:len(self.acs.shape)] = self.acs.shape
+            self.acs_sig = torch.zeros((self.NCha, *sz[1:4], self.NSli, len(self.NFra), self.NEco), dtype=self.acs.dtype)
+        # Save multi-channel complex-valued raw_kspace data
+        self.acs_sig[..., self.cSliSort, self.cFra, self.cEco] = self.acs[...,None]
+            
+            
